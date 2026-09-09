@@ -480,6 +480,7 @@ install_console_tui() {
   if [ "$HEADLESS" -eq 1 ]; then
     step "Skipping console TUI (--headless)"
     ok "Run it any time: $APPLIANCE_DIR/tui/bibsee-tui"
+    ok "Read the current PIN: $APPLIANCE_DIR/tui/bibsee-tui pin"
     return 0
   fi
   step "Wiring the boot TUI to the console"
@@ -626,7 +627,9 @@ iPAD TRUST (once per iPad, before race day):
 
 EOF
   if [ "$HEADLESS" -eq 1 ]; then
-    printf '  Manage Bibsee:  %s/tui/bibsee-tui\n\n' "$APPLIANCE_DIR"
+    printf '  Manage Bibsee:  %s/tui/bibsee-tui\n' "$APPLIANCE_DIR"
+    printf '  Current PIN:    %s/tui/bibsee-tui pin\n' "$APPLIANCE_DIR"
+    printf '                  (the PIN changes every time Bibsee starts)\n\n'
   else
     printf '  Manage Bibsee:  reboot, or run %s/tui/bibsee-tui\n\n' "$APPLIANCE_DIR"
   fi
