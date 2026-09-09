@@ -137,13 +137,34 @@ check_ports() {
 }
 
 check_network() {
-  if curl -sf --max-time 10 --head https://ghcr.io > /dev/null 2>&1; then
+# ghcr.io answers HEAD with 405 and /v2/ with 401. Neither status means
+# "unreachable", so -f (fail on HTTP error) is wrong here — only curl's exit
+# code distinguishes a network failure from a server that answered.
+  if curl -s -o /dev/null --max-time 10 https://ghcr.io/v2/ 2> /dev/null; then
     ok "Internet reachable (ghcr.io)"
   elif [ "$SKIP_PULL" -eq 1 ]; then
     warn "No internet — continuing because --skip-pull was given"
   else
     die "Cannot reach ghcr.io. Connect this machine to the internet, or re-run with --skip-pull if the image is already loaded."
   fi
+}
+
+check_network_interfaces() {
+  chosen_ip="$(local_ip)"
+  chosen_if="$(default_iface)"
+  count="$(ip -4 -o addr show scope global 2> /dev/null | wc -l | tr -d ' ')"
+
+  if [ "${count:-0}" -le 1 ]; then
+    ok "Network connection: ${chosen_if:-unknown} (${chosen_ip:-no address})"
+    return 0
+  fi
+
+  warn "This machine has $count network connections at once:"
+  ip -4 -o addr show scope global 2> /dev/null \
+    | awk '{split($4,a,"/"); printf "        %-10s %s\n", $2, a[1]}'
+  warn "Bibsee will use ${chosen_ip} — that is the address to give your router."
+  warn "If you meant to use the other connection, unplug or disconnect this one"
+  warn "and run this installer again."
 }
 
 check_clock() {
@@ -165,6 +186,7 @@ preflight() {
   stop_existing_container
   check_ports
   check_network
+  check_network_interfaces
   check_clock
 }
 
@@ -330,6 +352,11 @@ local_ip() {
     | awk '/src/{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}'
 }
 
+default_iface() {
+  ip -4 route get 1.1.1.1 2> /dev/null \
+    | awk '/dev/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}'
+}
+
 setup_dns() {
   step "Configuring dnsmasq for $DOMAIN"
   PI_IP="${OVERRIDE_IP:-$(local_ip)}"
@@ -375,6 +402,41 @@ setup_tls() {
   ok "Certificates generated in $CERTS_DIR"
 }
 
+console_user() {
+  u="${SUDO_USER:-}"
+  if [ -z "$u" ] || ! id "$u" > /dev/null 2>&1; then
+    u="$(awk -F: '$3==1000{print $1;exit}' /etc/passwd)"
+  fi
+  printf '%s' "$u"
+}
+
+# The TUI runs as the console user but has to set the system clock, which is
+# root-only. Grant exactly those commands and nothing else, with no password —
+# a prompt would have nowhere to render inside a full-screen TUI.
+grant_clock_privileges() {
+  step "Allowing the console user to set the clock"
+  user="$(console_user)"
+  [ -n "$user" ] || { warn "No console user found — skipping"; return 0; }
+
+  tmp="/etc/sudoers.d/bibsee.tmp.$$"
+  {
+    printf '# Managed by bibsee install.sh — lets the Bibsee TUI fix a wrong clock\n'
+    printf '%s ALL=(root) NOPASSWD: %s, %s, %s\n' "$user" \
+      "$(command -v timedatectl || echo /usr/bin/timedatectl)" \
+      "$(command -v hwclock || echo /sbin/hwclock)" \
+      "$(command -v date || echo /bin/date)"
+  } > "$tmp"
+  chmod 0440 "$tmp"
+
+  if visudo -cf "$tmp" > /dev/null 2>&1; then
+    mv "$tmp" /etc/sudoers.d/bibsee
+    ok "$user may set the system clock from the TUI"
+  else
+    rm -f "$tmp"
+    warn "sudoers rule rejected — setting the clock from the TUI will not work"
+  fi
+}
+
 install_console_tui() {
   if [ "$HEADLESS" -eq 1 ]; then
     step "Skipping console TUI (--headless)"
@@ -382,8 +444,7 @@ install_console_tui() {
     return 0
   fi
   step "Wiring the boot TUI to the console"
-  AUTOLOGIN_USER="${SUDO_USER:-pi}"
-  id "$AUTOLOGIN_USER" > /dev/null 2>&1 || AUTOLOGIN_USER="$(awk -F: '$3==1000{print $1;exit}' /etc/passwd)"
+  AUTOLOGIN_USER="$(console_user)"
   [ -n "$AUTOLOGIN_USER" ] || { warn "No console user found — skipping autologin"; return 0; }
 
   mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -477,6 +538,15 @@ verify() {
     bad "Root CA is not being served — iPads will not be able to trust $DOMAIN"
   fi
 
+  cuser="$(console_user)"
+  if [ -z "$cuser" ]; then
+    warn "No console user — skipped the clock-permission check"
+  elif sudo -l -U "$cuser" 2> /dev/null | grep -q timedatectl; then
+    ok "Console user can set the clock from the TUI"
+  else
+    warn "Console user may not be able to set the clock from the TUI"
+  fi
+
   [ "$FAILURES" -eq 0 ] || die "$FAILURES check(s) failed. Bibsee is installed but not fully working — fix the items marked ✗ above and re-run."
 }
 
@@ -533,6 +603,7 @@ uninstall() {
   systemctl restart getty@tty1 > /dev/null 2>&1 || true
   ok "Console autologin removed"
 
+  rm -f /etc/sudoers.d/bibsee
   rm -rf /opt/bibsee "$STATE_FILE"
   rmdir /etc/bibsee 2> /dev/null || true
   ok "Appliance files removed"
@@ -562,6 +633,7 @@ main() {
   setup_volumes
   setup_dns
   setup_tls
+  grant_clock_privileges
   install_console_tui
   start_bibsee
   write_state
