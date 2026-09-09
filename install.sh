@@ -11,6 +11,7 @@
 #   --image REF        Image to install         (default ghcr.io/bibtime/bibsee:latest)
 #   --domain NAME      Local domain             (default bibsee.work)
 #   --wifi-country CC  Wi-Fi regulatory country (default US)
+#   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
 #   --skip-pull        Use the image already present locally (offline installs)
 #   --headless         Skip the tty1 autologin TUI (servers without a console)
 #   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
@@ -21,6 +22,7 @@ set -eu
 IMAGE="${BIBSEE_IMAGE:-ghcr.io/bibtime/bibsee:latest}"
 DOMAIN="${BIBSEE_DOMAIN:-bibsee.work}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+TIMEZONE="${BIBSEE_TIMEZONE:-}"
 CONTAINER="bibsee"
 VOLUME_DIR="/var/lib/bibsee"
 CERTS_DIR="$VOLUME_DIR/certs"
@@ -55,6 +57,7 @@ Options (when piping, pass them after `sh -s --`):
   --image REF        Image to install         (default ghcr.io/bibtime/bibsee:latest)
   --domain NAME      Local domain             (default bibsee.work)
   --wifi-country CC  Wi-Fi regulatory country (default US)
+  --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
   --skip-pull        Use the image already present locally (offline installs)
   --headless         Skip the tty1 autologin TUI (servers without a console)
   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
@@ -69,6 +72,7 @@ parse_args() {
       --image)        [ $# -ge 2 ] || die "--image needs a value"; IMAGE="$2"; shift 2 ;;
       --domain)       [ $# -ge 2 ] || die "--domain needs a value"; DOMAIN="$2"; shift 2 ;;
       --wifi-country) [ $# -ge 2 ] || die "--wifi-country needs a value"; WIFI_COUNTRY="$2"; shift 2 ;;
+      --timezone)     [ $# -ge 2 ] || die "--timezone needs a value"; TIMEZONE="$2"; shift 2 ;;
       --skip-pull)    SKIP_PULL=1; shift ;;
       --headless)     HEADLESS=1; shift ;;
       --uninstall)    UNINSTALL=1; shift ;;
@@ -350,6 +354,30 @@ set_wifi_country() {
   ok "Wi-Fi country: $WIFI_COUNTRY"
 }
 
+current_timezone() {
+  timedatectl show --property=Timezone --value 2> /dev/null \
+    || cat /etc/timezone 2> /dev/null \
+    || printf 'UTC'
+}
+
+setup_timezone() {
+  step "Time zone"
+  if [ -n "$TIMEZONE" ]; then
+    if ! timedatectl list-timezones 2> /dev/null | grep -qx "$TIMEZONE"; then
+      die "Unknown time zone: $TIMEZONE. List valid names with: timedatectl list-timezones"
+    fi
+    timedatectl set-timezone "$TIMEZONE" 2> /dev/null \
+      || die "Could not set the time zone to $TIMEZONE."
+  fi
+  TZ_NOW="$(current_timezone)"
+  case "$TZ_NOW" in
+    UTC|Etc/UTC)
+      warn "Time zone is $TZ_NOW — race times will display in UTC, not local time."
+      warn "Set it from the console TUI (press Z), or re-run with --timezone." ;;
+    *) ok "Time zone: $TZ_NOW" ;;
+  esac
+}
+
 setup_volumes() {
   step "Creating data directories"
   mkdir -p "$VOLUME_DIR" "$CERTS_DIR" "$RUN_DIR"
@@ -569,7 +597,9 @@ summary() {
 
   Address:  https://$DOMAIN   (this machine: $PI_IP)
   PIN:      ${PIN:-see the console TUI}
+  Time zone: ${TZ_NOW:-unknown}
 
+$(case "${TZ_NOW:-}" in UTC|Etc/UTC) printf 'TIME ZONE (do this first):\n  This machine is on %s, so every time Bibsee shows will be UTC rather\n  than local. Fix it on the console screen by pressing Z.\n' "$TZ_NOW" ;; esac)
 ROUTER SETUP (once, on your race-day network):
   1. Log into the router admin panel.
   2. Open DHCP / LAN settings.
@@ -640,6 +670,7 @@ main() {
   pull_image
   install_payload
   set_wifi_country
+  setup_timezone
   setup_volumes
   setup_dns
   setup_tls
