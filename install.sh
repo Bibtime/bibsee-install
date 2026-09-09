@@ -13,7 +13,9 @@
 #   --wifi-country CC  Wi-Fi regulatory country (default US)
 #   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
 #   --skip-pull        Use the image already present locally (offline installs)
-#   --headless         Skip the tty1 autologin TUI (servers without a console)
+#   --headless         Do not auto-login and open the Bibsee screen on an
+#                      attached monitor at boot. The screen is still available
+#                      any time by running the TUI over SSH.
 #   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
 #   --purge            With --uninstall, also delete race data
 #   --help
@@ -59,7 +61,9 @@ Options (when piping, pass them after `sh -s --`):
   --wifi-country CC  Wi-Fi regulatory country (default US)
   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
   --skip-pull        Use the image already present locally (offline installs)
-  --headless         Skip the tty1 autologin TUI (servers without a console)
+  --headless         Do not auto-login and open the Bibsee screen on an
+                     attached monitor at boot. The screen is still available
+                     any time by running the TUI over SSH.
   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
   --purge            With --uninstall, also delete race data
   --help
@@ -478,7 +482,7 @@ grant_clock_privileges() {
 
 install_console_tui() {
   if [ "$HEADLESS" -eq 1 ]; then
-    step "Skipping console TUI (--headless)"
+    step "Not opening the Bibsee screen at boot (--headless)"
     ok "Run it any time: $APPLIANCE_DIR/tui/bibsee-tui"
     ok "Read the current PIN: $APPLIANCE_DIR/tui/bibsee-tui pin"
     return 0
