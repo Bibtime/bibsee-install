@@ -149,10 +149,22 @@ check_network() {
   fi
 }
 
+# Real network links only. Docker creates docker0 and a veth per container, and
+# counting those would fire this warning on every machine that has ever run an
+# install — training the operator to ignore it. A physical link has a device
+# entry under /sys/class/net; virtual ones do not.
+physical_ipv4() {
+  ip -4 -o addr show scope global 2> /dev/null | while read -r _ iface _ cidr _; do
+    [ -e "/sys/class/net/${iface}/device" ] || continue
+    printf '        %-10s %s\n' "$iface" "${cidr%%/*}"
+  done
+}
+
 check_network_interfaces() {
   chosen_ip="$(local_ip)"
   chosen_if="$(default_iface)"
-  count="$(ip -4 -o addr show scope global 2> /dev/null | wc -l | tr -d ' ')"
+  links="$(physical_ipv4)"
+  count="$(printf '%s\n' "$links" | grep -c '[^[:space:]]' || true)"
 
   if [ "${count:-0}" -le 1 ]; then
     ok "Network connection: ${chosen_if:-unknown} (${chosen_ip:-no address})"
@@ -160,11 +172,9 @@ check_network_interfaces() {
   fi
 
   warn "This machine has $count network connections at once:"
-  ip -4 -o addr show scope global 2> /dev/null \
-    | awk '{split($4,a,"/"); printf "        %-10s %s\n", $2, a[1]}'
+  printf '%s\n' "$links"
   warn "Bibsee will use ${chosen_ip} — that is the address to give your router."
-  warn "If you meant to use the other connection, unplug or disconnect this one"
-  warn "and run this installer again."
+  warn "If you meant to use the other one, disconnect this one and run again."
 }
 
 check_clock() {
