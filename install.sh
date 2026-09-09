@@ -563,6 +563,13 @@ verify() {
     bad "DNS check failed — dnsmasq returned '${resolved:-nothing}', expected $PI_IP"
   fi
 
+  container_tz="$(docker exec "$CONTAINER" printenv TZ 2> /dev/null || true)"
+  if [ "$container_tz" = "${TZ_NOW:-}" ]; then
+    ok "Bibsee is using the same time zone as this machine (${TZ_NOW:-unknown})"
+  else
+    bad "Bibsee is on '${container_tz:-UTC}' but this machine is on '${TZ_NOW:-unknown}' — times will not match"
+  fi
+
   PIN="$(tr -d '\r\n' < "$RUN_DIR/pin" 2> /dev/null || true)"
   if [ -n "$PIN" ]; then
     ok "PIN available to the TUI"
