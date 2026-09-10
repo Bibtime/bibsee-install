@@ -448,6 +448,10 @@ detect_local_src() {
     *)   return 0 ;;
   esac
   d="$(cd "$(dirname "$0")" && pwd)"
+  # The installed copy sits beside the very files it would be copying, so it
+  # would reinstall what is already there — leaving the appliance on its old
+  # version while reporting success. Only a real checkout counts.
+  [ "$d" = "$APPLIANCE_DIR" ] && return 0
   [ -f "$d/lib/state.sh" ] && [ -f "$d/wifi.sh" ] && LOCAL_SRC="$d"
   return 0
 }
