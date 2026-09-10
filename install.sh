@@ -12,6 +12,8 @@
 #   --domain NAME      Local domain             (default bibsee.work)
 #   --wifi-country CC  Wi-Fi regulatory country (default US)
 #   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
+#   --console-user U   Account the attached monitor logs in as (default: the
+#                      user running sudo, else the first account on the machine)
 #   --skip-pull        Use the image already present locally (offline installs)
 #   --headless         Do not auto-login and open the Bibsee screen on an
 #                      attached monitor at boot. The screen is still available
@@ -25,6 +27,7 @@ IMAGE="${BIBSEE_IMAGE:-ghcr.io/bibtime/bibsee:latest}"
 DOMAIN="${BIBSEE_DOMAIN:-bibsee.work}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 TIMEZONE="${BIBSEE_TIMEZONE:-}"
+CONSOLE_USER="${BIBSEE_CONSOLE_USER:-}"
 CONTAINER="bibsee"
 VOLUME_DIR="/var/lib/bibsee"
 CERTS_DIR="$VOLUME_DIR/certs"
@@ -60,6 +63,8 @@ Options (when piping, pass them after `sh -s --`):
   --domain NAME      Local domain             (default bibsee.work)
   --wifi-country CC  Wi-Fi regulatory country (default US)
   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
+  --console-user U   Account the attached monitor logs in as (default: the
+                     user running sudo, else the first account on the machine)
   --skip-pull        Use the image already present locally (offline installs)
   --headless         Do not auto-login and open the Bibsee screen on an
                      attached monitor at boot. The screen is still available
@@ -77,6 +82,7 @@ parse_args() {
       --domain)       [ $# -ge 2 ] || die "--domain needs a value"; DOMAIN="$2"; shift 2 ;;
       --wifi-country) [ $# -ge 2 ] || die "--wifi-country needs a value"; WIFI_COUNTRY="$2"; shift 2 ;;
       --timezone)     [ $# -ge 2 ] || die "--timezone needs a value"; TIMEZONE="$2"; shift 2 ;;
+      --console-user) [ $# -ge 2 ] || die "--console-user needs a value"; CONSOLE_USER="$2"; shift 2 ;;
       --skip-pull)    SKIP_PULL=1; shift ;;
       --headless)     HEADLESS=1; shift ;;
       --uninstall)    UNINSTALL=1; shift ;;
@@ -444,7 +450,16 @@ setup_tls() {
   ok "Certificates generated in $CERTS_DIR"
 }
 
+# Which account the attached monitor logs in as, and which gets the narrow sudo
+# rights the screen needs. --console-user wins; otherwise the person running
+# sudo, and failing that the first real account (uid 1000) on the machine.
 console_user() {
+  if [ -n "$CONSOLE_USER" ]; then
+    id "$CONSOLE_USER" > /dev/null 2>&1 \
+      || die "No such user: $CONSOLE_USER. Create the account first, or pass a different --console-user."
+    printf '%s' "$CONSOLE_USER"
+    return 0
+  fi
   u="${SUDO_USER:-}"
   if [ -z "$u" ] || ! id "$u" > /dev/null 2>&1; then
     u="$(awk -F: '$3==1000{print $1;exit}' /etc/passwd)"
@@ -537,7 +552,7 @@ EOF
   systemctl daemon-reload
   systemctl restart getty@tty1 2> /dev/null || true
   ok "The Bibsee screen opens on the attached monitor at boot"
-  warn "tty1 now logs in as '$AUTOLOGIN_USER' automatically, with no password."
+  warn "The monitor now logs in as '$AUTOLOGIN_USER' automatically, no password."
   warn "Anyone at this machine's keyboard has a shell. That is the point on a"
   warn "race-day appliance; re-run with --headless if it is not what you want."
 }

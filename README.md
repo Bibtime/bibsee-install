@@ -63,6 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install
 | `--domain NAME` | Serve on a different local domain (default `bibsee.work`) |
 | `--timezone NAME` | Time zone, e.g. `America/New_York`. Leave it out and set it later on the Bibsee screen |
 | `--wifi-country CC` | Wi-Fi regulatory country (default `US`) |
+| `--console-user NAME` | The account the attached monitor logs in as. Defaults to whoever ran `sudo`, or the machine's first account |
 | `--skip-pull` | Use an image already loaded locally, for offline installs |
 | `--headless` | Do not open the Bibsee screen at boot — see below |
 | `--uninstall` | Remove Bibsee, keeping race data in `/var/lib/bibsee` |
