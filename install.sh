@@ -36,6 +36,7 @@ APPLIANCE_DIR="/opt/bibsee/appliance"
 STATE_FILE="/etc/bibsee/state.json"
 MKCERT_VERSION="v1.4.4"
 MIN_FREE_KB=4194304   # 4 GiB
+CERT_RENEW_SECONDS=2592000   # reissue when under 30 days remain
 
 SKIP_PULL=0
 HEADLESS=0
@@ -365,6 +366,7 @@ install_deps() {
     wireless-regdb \
     curl \
     ca-certificates \
+    openssl \
     python3 \
     dnsutils \
     iproute2 \
@@ -563,12 +565,26 @@ setup_tls() {
   KEY_FILE="$CERTS_DIR/$DOMAIN.key"
   ROOTCA_FILE="$CERTS_DIR/rootca.crt"
 
+  MKCERT_DIR="$CERTS_DIR/mkcert"
+
   if [ -f "$CERT_FILE" ] && [ -f "$KEY_FILE" ] && [ -f "$ROOTCA_FILE" ]; then
-    ok "Certificates already present — keeping them (iPads stay trusted)"
-    return 0
+    if ! command -v openssl > /dev/null 2>&1; then
+      ok "Certificates already present — keeping them (iPads stay trusted)"
+      return 0
+    fi
+    if openssl x509 -in "$CERT_FILE" -checkend "$CERT_RENEW_SECONDS" > /dev/null 2>&1; then
+      expires="$(openssl x509 -in "$CERT_FILE" -noout -enddate 2> /dev/null | cut -d= -f2)"
+      ok "Certificates present, valid until ${expires:-unknown} — keeping them"
+      return 0
+    fi
+    # Reissuing the leaf from the CA that is already in CAROOT leaves that
+    # authority untouched, so every iPad stays trusted. Only regenerating the
+    # authority itself would mean visiting each device again.
+    warn "The certificate for $DOMAIN has expired, or is about to."
+    warn "Reissuing it from the same local authority — iPads stay trusted."
+    rm -f "$CERT_FILE" "$KEY_FILE"
   fi
 
-  MKCERT_DIR="$CERTS_DIR/mkcert"
   mkdir -p "$MKCERT_DIR"
   CAROOT="$MKCERT_DIR"; export CAROOT
   mkcert -install > /dev/null 2>&1 || true
@@ -794,6 +810,15 @@ verify() {
     ok "Root CA downloadable at http://$DOMAIN/rootca.crt"
   else
     bad "Root CA is not being served — iPads will not be able to trust $DOMAIN"
+  fi
+
+  if command -v openssl > /dev/null 2>&1; then
+    if openssl x509 -in "$CERTS_DIR/$DOMAIN.crt" -checkend 5184000 > /dev/null 2>&1; then
+      ok "Certificate valid until $(openssl x509 -in "$CERTS_DIR/$DOMAIN.crt" -noout -enddate 2> /dev/null | cut -d= -f2)"
+    else
+      warn "The certificate expires within 60 days. Re-run this installer before"
+      warn "your next race and it will reissue one; iPads stay trusted."
+    fi
   fi
 
   cuser="$(console_user)"
