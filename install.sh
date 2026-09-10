@@ -216,16 +216,11 @@ check_wifi_management() {
   case "$wifi_line" in
     *:unmanaged)
       warn "Wi-Fi adapter $wifi_dev is not managed by NetworkManager, so changing"
-      warn "networks from the Bibsee screen will not work. To hand it over:"
-      warn "    sudo tee /etc/netplan/99-bibsee-wifi.yaml <<'EOF'"
-      warn "    network:"
-      warn "      version: 2"
-      warn "      wifis: {}"
-      warn "      renderer: NetworkManager"
-      warn "    EOF"
-      warn "    sudo netplan apply"
-      warn "Do that from the machine's own keyboard, not over Wi-Fi SSH — it"
-      warn "will briefly drop the connection." ;;
+      warn "networks from the Bibsee screen will not work. This is normal on"
+      warn "Ubuntu Server, where Raspberry Pi Imager's Wi-Fi settings are handled"
+      warn "by netplan instead."
+      warn "To hand it over, from the machine's own keyboard (not over SSH):"
+      warn "    sudo $APPLIANCE_DIR/enable-wifi-switching.sh" ;;
     *) ok "Wi-Fi adapter $wifi_dev is managed and can be switched from the screen" ;;
   esac
 }
@@ -428,7 +423,8 @@ install_payload() {
 
   if [ -n "$LOCAL_SRC" ]; then
     cp -R "$LOCAL_SRC/lib" "$staging/lib"
-    cp "$LOCAL_SRC/wifi.sh" "$LOCAL_SRC/install.sh" "$LOCAL_SRC/update-address.sh" "$staging/"
+    cp "$LOCAL_SRC/wifi.sh" "$LOCAL_SRC/install.sh" "$LOCAL_SRC/update-address.sh" \
+       "$LOCAL_SRC/enable-wifi-switching.sh" "$staging/"
     mkdir -p "$staging/tui"
     if [ -x "$LOCAL_SRC/tui/bibsee-tui" ] && "$LOCAL_SRC/tui/bibsee-tui" --help > /dev/null 2>&1; then
       cp "$LOCAL_SRC/tui/bibsee-tui" "$staging/tui/bibsee-tui"
@@ -446,12 +442,13 @@ install_payload() {
     ok "Appliance files extracted from $IMAGE"
   fi
 
-  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh tui/bibsee-tui; do
+  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh enable-wifi-switching.sh tui/bibsee-tui; do
     [ -e "$staging/$required" ] \
       || die "Appliance payload is missing $required. If you pinned an older --image, use a newer tag."
   done
 
-  chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
+  chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" \
+    "$staging/enable-wifi-switching.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
   mkdir -p "$(dirname "$APPLIANCE_DIR")"
   rm -rf "$APPLIANCE_DIR"
   mv "$staging" "$APPLIANCE_DIR"
