@@ -207,6 +207,29 @@ clock_skew_seconds() {
   printf '%s' "$diff"
 }
 
+check_wifi_management() {
+  command -v nmcli > /dev/null 2>&1 || return 0
+  wifi_line="$(nmcli -t -f DEVICE,TYPE,STATE device status 2> /dev/null | awk -F: '$2=="wifi"{print; exit}')"
+  [ -n "$wifi_line" ] || return 0
+
+  wifi_dev="${wifi_line%%:*}"
+  case "$wifi_line" in
+    *:unmanaged)
+      warn "Wi-Fi adapter $wifi_dev is not managed by NetworkManager, so changing"
+      warn "networks from the Bibsee screen will not work. To hand it over:"
+      warn "    sudo tee /etc/netplan/99-bibsee-wifi.yaml <<'EOF'"
+      warn "    network:"
+      warn "      version: 2"
+      warn "      wifis: {}"
+      warn "      renderer: NetworkManager"
+      warn "    EOF"
+      warn "    sudo netplan apply"
+      warn "Do that from the machine's own keyboard, not over Wi-Fi SSH — it"
+      warn "will briefly drop the connection." ;;
+    *) ok "Wi-Fi adapter $wifi_dev is managed and can be switched from the screen" ;;
+  esac
+}
+
 check_clock() {
   year="$(date +%Y)"
   if [ "$year" -lt 2025 ]; then
@@ -279,18 +302,56 @@ free_port_53() {
   fi
 }
 
+APT_LOCK_WAIT=600
+
+# apt-get, retried while another package operation holds the lock. A machine
+# that has just been imaged is usually part-way through unattended-upgrades,
+# and the lock error it produces reads like a broken network. Detecting the
+# lock by hand would need fuser (not installed on a minimal server) or flock
+# (which does not interact with the fcntl locks dpkg uses), so this simply
+# retries and inspects the error.
+apt_get() {
+  waited=0
+  err_file="/tmp/bibsee-apt-err.$$"
+  while :; do
+    if apt-get "$@" 2> "$err_file"; then
+      [ "$waited" -gt 0 ] && ok "Package manager free after ${waited}s"
+      rm -f "$err_file"
+      return 0
+    fi
+    if ! grep -qiE 'could not get lock|another process|frontend lock|temporarily unavailable' "$err_file"; then
+      cat "$err_file" >&2
+      rm -f "$err_file"
+      return 1
+    fi
+    if [ "$waited" -eq 0 ]; then
+      warn "Another package operation is running — most likely the automatic"
+      warn "updates that run on a freshly imaged machine. Waiting for it."
+    fi
+    if [ "$waited" -ge "$APT_LOCK_WAIT" ]; then
+      cat "$err_file" >&2
+      rm -f "$err_file"
+      die "Package manager still busy after $((APT_LOCK_WAIT / 60)) minutes. Check 'systemctl status unattended-upgrades', then run this again."
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
 install_deps() {
   step "Installing system dependencies"
   free_port_53
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq || die "apt-get update failed — check the network and apt sources."
-  apt-get install -y -qq \
+  apt_get update -qq || die "apt-get update failed — check the network and apt sources."
+  apt_get install -y -qq \
     docker.io \
     network-manager \
     dnsmasq \
     chrony \
     sqlite3 \
     ethtool \
+    iw \
+    wireless-regdb \
     curl \
     ca-certificates \
     python3 \
@@ -303,7 +364,7 @@ install_deps() {
   # It is only useful on a board that actually has a hardware clock, so this is
   # opportunistic — never a reason to fail the install.
   if ! command -v hwclock > /dev/null 2>&1; then
-    apt-get install -y -qq util-linux-extra > /dev/null 2>&1 || true
+    apt_get install -y -qq util-linux-extra > /dev/null 2>&1 || true
   fi
 
   for bin in docker dnsmasq python3 curl dig; do
@@ -317,13 +378,14 @@ install_deps() {
   ok "Docker running"
 
   install_mkcert
+  check_wifi_management
 }
 
 # mkcert is packaged on some releases and not others; fall back to the upstream
 # release binary so TLS setup never fails silently.
 install_mkcert() {
   if have mkcert; then ok "mkcert present"; return 0; fi
-  apt-get install -y -qq mkcert > /dev/null 2>&1 || true
+  apt_get install -y -qq mkcert > /dev/null 2>&1 || true
   if have mkcert; then ok "mkcert installed from apt"; return 0; fi
   url="https://github.com/FiloSottile/mkcert/releases/download/${MKCERT_VERSION}/mkcert-${MKCERT_VERSION}-linux-${ARCH}"
   curl -fsSL "$url" -o /usr/local/bin/mkcert \
