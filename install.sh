@@ -22,6 +22,8 @@
 #   --headless         Do not auto-login and open the Bibsee screen on an
 #                      attached monitor at boot. The screen is still available
 #                      any time by running the TUI over SSH.
+#   --update           Update Bibsee and its management files only, leaving the
+#                      system setup, certificates and DNS alone
 #   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
 #   --purge            With --uninstall, also delete race data
 #   --help
@@ -636,9 +638,14 @@ console_user() {
   printf '%s' "$u"
 }
 
-# The TUI runs as the console user but has to set the system clock, which is
-# root-only. Grant exactly those commands and nothing else, with no password —
-# a prompt would have nowhere to render inside a full-screen TUI.
+# The screen runs as the console user but needs root for a few specific things.
+# Grant exactly those and nothing else, with no password — a prompt would have
+# nowhere to render inside a full-screen application, so the calls use sudo -n
+# and fail immediately rather than hanging.
+#
+# install.sh is granted only with --update, so this cannot be used to run an
+# arbitrary install: --image in particular would otherwise let any local user
+# install any image as root.
 grant_clock_privileges() {
   step "Allowing the console user to manage the clock, network and address"
   user="$(console_user)"
@@ -652,7 +659,7 @@ grant_clock_privileges() {
       "$(command -v hwclock || echo /sbin/hwclock)" \
       "$(command -v date || echo /bin/date)" \
       "$(command -v nmcli || echo /usr/bin/nmcli)" \
-      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh"
+      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh --update"
   } > "$tmp"
   chmod 0440 "$tmp"
 
