@@ -686,8 +686,16 @@ EOF
   usermod -aG docker "$AUTOLOGIN_USER" 2> /dev/null || true
 
   systemctl daemon-reload
-  systemctl restart getty@tty1 2> /dev/null || true
-  ok "The Bibsee screen opens on the attached monitor at boot"
+  # Restarting the console getty kills whatever is running on it. Installing
+  # from the machine's own keyboard — which is the normal way to set up a Pi —
+  # that is this script. Leave it alone and let the change take effect at the
+  # next boot instead.
+  if who 2> /dev/null | grep -q "tty1"; then
+    ok "The Bibsee screen will open on the attached monitor after a reboot"
+  else
+    systemctl restart getty@tty1 2> /dev/null || true
+    ok "The Bibsee screen opens on the attached monitor at boot"
+  fi
   warn "The monitor now logs in as '$AUTOLOGIN_USER' automatically, no password."
   warn "Anyone at this machine's keyboard has a shell. That is the point on a"
   warn "race-day appliance; re-run with --headless if it is not what you want."
@@ -838,8 +846,19 @@ uninstall() {
   systemctl restart dnsmasq > /dev/null 2>&1 || true
   ok "dnsmasq config removed"
 
-  remove_console_autologin
-  ok "Console autologin removed — tty1 asks for a password again"
+  if who 2> /dev/null | grep -q "tty1"; then
+    rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    rmdir /etc/systemd/system/getty@tty1.service.d 2> /dev/null || true
+    for home in /home/*; do
+      [ -f "$home/.bashrc" ] || continue
+      sed -i '/bibsee-tui/d;/# Bibsee TUI on console login/d' "$home/.bashrc" 2> /dev/null || true
+    done
+    systemctl daemon-reload
+    ok "Console autologin removed — tty1 asks for a password again after a reboot"
+  else
+    remove_console_autologin
+    ok "Console autologin removed — tty1 asks for a password again"
+  fi
 
   rm -f /etc/sudoers.d/bibsee
   rm -rf /opt/bibsee "$STATE_FILE"
