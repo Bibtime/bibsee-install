@@ -668,6 +668,21 @@ install_console_tui() {
     return 0
   fi
   step "Setting up the Bibsee screen on the attached monitor"
+
+  # A machine that boots to a desktop gives the display to the graphical
+  # session, so the Bibsee screen is configured correctly and never seen.
+  if [ "$(systemctl get-default 2> /dev/null)" = "graphical.target" ]; then
+    warn "This machine boots to a desktop, so the Bibsee screen will not appear"
+    warn "on the monitor — the desktop takes the display instead."
+    warn "To boot to the Bibsee screen instead:"
+    if command -v raspi-config > /dev/null 2>&1; then
+      warn "    sudo raspi-config nonint do_boot_behaviour B2 && sudo reboot"
+    else
+      warn "    sudo systemctl set-default multi-user.target && sudo reboot"
+    fi
+    warn "Everything else works either way; open Bibsee at https://$DOMAIN."
+  fi
+
   AUTOLOGIN_USER="$(console_user)"
   [ -n "$AUTOLOGIN_USER" ] || { warn "No console user found — skipping autologin"; return 0; }
 
