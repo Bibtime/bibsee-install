@@ -480,14 +480,43 @@ grant_clock_privileges() {
   fi
 }
 
+# Undo the console autologin. Shared by --headless and --uninstall, so that
+# --headless is a real toggle rather than a flag that only skips setting it up.
+remove_console_autologin() {
+  removed=0
+  if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ]; then
+    rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    rmdir /etc/systemd/system/getty@tty1.service.d 2> /dev/null || true
+    removed=1
+  fi
+  for home in /home/*; do
+    [ -f "$home/.bashrc" ] || continue
+    if grep -qF "bibsee-tui" "$home/.bashrc" 2> /dev/null; then
+      sed -i '/bibsee-tui/d;/# Bibsee TUI on console login/d' "$home/.bashrc" 2> /dev/null || true
+      removed=1
+    fi
+  done
+  if [ "$removed" -eq 1 ]; then
+    systemctl daemon-reload 2> /dev/null || true
+    systemctl restart getty@tty1 2> /dev/null || true
+  fi
+  return 0
+}
+
 install_console_tui() {
   if [ "$HEADLESS" -eq 1 ]; then
     step "Not opening the Bibsee screen at boot (--headless)"
-    ok "Run it any time: $APPLIANCE_DIR/tui/bibsee-tui"
+    if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ]; then
+      remove_console_autologin
+      ok "Removed the automatic console login — tty1 asks for a password again"
+    else
+      ok "tty1 keeps its normal login prompt"
+    fi
+    ok "Open the screen any time: $APPLIANCE_DIR/tui/bibsee-tui"
     ok "Read the current PIN: $APPLIANCE_DIR/tui/bibsee-tui pin"
     return 0
   fi
-  step "Wiring the boot TUI to the console"
+  step "Setting up the Bibsee screen on the attached monitor"
   AUTOLOGIN_USER="$(console_user)"
   [ -n "$AUTOLOGIN_USER" ] || { warn "No console user found — skipping autologin"; return 0; }
 
@@ -507,7 +536,10 @@ EOF
 
   systemctl daemon-reload
   systemctl restart getty@tty1 2> /dev/null || true
-  ok "Console TUI runs on tty1 as '$AUTOLOGIN_USER'"
+  ok "The Bibsee screen opens on the attached monitor at boot"
+  warn "tty1 now logs in as '$AUTOLOGIN_USER' automatically, with no password."
+  warn "Anyone at this machine's keyboard has a shell. That is the point on a"
+  warn "race-day appliance; re-run with --headless if it is not what you want."
 }
 
 write_state() {
@@ -630,6 +662,11 @@ iPAD TRUST (once per iPad, before race day):
   6. Share > Add to Home Screen.
 
 EOF
+  if [ "$HEADLESS" -eq 0 ]; then
+    printf '  NOTE: this machine now logs in automatically on its attached monitor,\n'
+    printf '        with no password, and opens the Bibsee screen. Re-run with\n'
+    printf '        --headless to restore the normal login prompt.\n\n'
+  fi
   if [ "$HEADLESS" -eq 1 ]; then
     printf '  Manage Bibsee:  %s/tui/bibsee-tui\n' "$APPLIANCE_DIR"
     printf '  Current PIN:    %s/tui/bibsee-tui pin\n' "$APPLIANCE_DIR"
@@ -650,14 +687,8 @@ uninstall() {
   systemctl restart dnsmasq > /dev/null 2>&1 || true
   ok "dnsmasq config removed"
 
-  rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
-  rmdir /etc/systemd/system/getty@tty1.service.d 2> /dev/null || true
-  for home in /home/*; do
-    [ -f "$home/.bashrc" ] && sed -i '/bibsee-tui/d;/# Bibsee TUI on console login/d' "$home/.bashrc" 2> /dev/null || true
-  done
-  systemctl daemon-reload
-  systemctl restart getty@tty1 > /dev/null 2>&1 || true
-  ok "Console autologin removed"
+  remove_console_autologin
+  ok "Console autologin removed — tty1 asks for a password again"
 
   rm -f /etc/sudoers.d/bibsee
   rm -rf /opt/bibsee "$STATE_FILE"

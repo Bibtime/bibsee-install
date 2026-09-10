@@ -71,27 +71,35 @@ curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install
 
 ### About `--headless`
 
-By default the machine logs itself in on its attached monitor at boot and shows
+By default the machine logs itself in on its attached monitor at boot and opens
 the Bibsee screen: the address, the current PIN, the clock, and controls to start
 and stop Bibsee. That is the point of a Pi at a finish line — plug in a monitor
-and everything you need is there, with nothing to log into.
+and everything is there, with nothing to log into.
 
-That convenience is also the cost. Anyone who can reach the machine's keyboard
-gets in without a password. On a machine that lives in an office or a rack rather
-than travelling to races, pass `--headless` and it will not do that.
+**This changes how the machine behaves.** Normally a server shows a login prompt
+on its monitor. After installing, tty1 logs in automatically with no password,
+and quitting the Bibsee screen leaves a shell as that user. Anyone who can reach
+the keyboard has that shell, and that user is in the `docker` group, which is
+equivalent to root. Other virtual terminals (Ctrl+Alt+F2 and up) still ask for a
+password, and SSH is unchanged.
 
-`--headless` does not take the Bibsee screen away. You install over SSH either
-way, and either way you can open it whenever you want:
+On an appliance that travels to races and lives in a bag, that trade is the right
+one — you want a screen that works without credentials at 6am. On a machine that
+already exists and does other things, it is not. Pass `--headless`:
 
 ```sh
-/opt/bibsee/appliance/tui/bibsee-tui
+curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh -s -- --headless
 ```
 
-Since the PIN changes every time Bibsee starts, a headless machine can also just
-be asked for the current one:
+`--headless` is a real toggle, not just a skip: run it on a machine that already
+has the automatic login and it removes it, restoring the normal prompt.
+
+Either way the Bibsee screen stays available — you install over SSH regardless,
+and can open it whenever you want:
 
 ```sh
-/opt/bibsee/appliance/tui/bibsee-tui pin
+/opt/bibsee/appliance/tui/bibsee-tui        # the full screen
+/opt/bibsee/appliance/tui/bibsee-tui pin    # just the current PIN
 ```
 
 ## After installing
