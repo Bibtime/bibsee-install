@@ -47,6 +47,7 @@ SET_CONSOLE_FONT=1
 
 SKIP_PULL=0
 HEADLESS=0
+UPDATE_ONLY=0
 UNINSTALL=0
 PURGE=0
 ARCH=""
@@ -81,6 +82,8 @@ Options (when piping, pass them after `sh -s --`):
   --headless         Do not auto-login and open the Bibsee screen on an
                      attached monitor at boot. The screen is still available
                      any time by running the TUI over SSH.
+  --update           Update Bibsee and its management files only, leaving the
+                     system setup, certificates and DNS alone
   --uninstall        Remove Bibsee, keeping race data in /var/lib/bibsee
   --purge            With --uninstall, also delete race data
   --help
@@ -99,6 +102,7 @@ parse_args() {
       --headless)     HEADLESS=1; shift ;;
       --console-font-size) [ $# -ge 2 ] || die "--console-font-size needs a value"; CONSOLE_FONT_SIZE="$2"; shift 2 ;;
       --no-console-font)   SET_CONSOLE_FONT=0; shift ;;
+      --update)       UPDATE_ONLY=1; shift ;;
       --uninstall)    UNINSTALL=1; shift ;;
       --purge)        PURGE=1; shift ;;
       --help|-h)      usage; exit 0 ;;
@@ -648,7 +652,7 @@ grant_clock_privileges() {
       "$(command -v hwclock || echo /sbin/hwclock)" \
       "$(command -v date || echo /bin/date)" \
       "$(command -v nmcli || echo /usr/bin/nmcli)" \
-      "$APPLIANCE_DIR/update-address.sh"
+      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh"
   } > "$tmp"
   chmod 0440 "$tmp"
 
@@ -970,11 +974,53 @@ uninstall() {
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────
+# Update only: a new image and the management files that come with it. The
+# machine is already set up, so the system packages, DNS, certificates and
+# console wiring are left exactly as they are. Driven by the Bibsee screen,
+# which reads the step lines to show progress.
+update_only() {
+  require_root
+  detect_arch
+  check_network
+  pull_image
+  install_payload
+  grant_clock_privileges
+  install_command
+  step "Restarting Bibsee"
+  BIBSEE_IMAGE="$IMAGE"; BIBSEE_CONTAINER="$CONTAINER"; BIBSEE_DOMAIN="$DOMAIN"
+  BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"
+  export BIBSEE_IMAGE BIBSEE_CONTAINER BIBSEE_DOMAIN BIBSEE_VOLUME_DIR BIBSEE_RUN_DIR
+  # shellcheck disable=SC1091
+  . "$APPLIANCE_DIR/lib/docker.sh"
+  container_stop
+  container_start || die "Bibsee did not start after the update. Check 'docker logs $CONTAINER'."
+  ok "Bibsee restarted"
+
+  step "Checking it came back"
+  tries=0
+  while [ "$tries" -lt 30 ]; do
+    curl -skf --max-time 3 https://127.0.0.1/api/health > /dev/null 2>&1 && break
+    tries=$((tries + 1)); sleep 2
+  done
+  [ "$tries" -lt 30 ] || die "Bibsee did not answer after the update. Check 'docker logs $CONTAINER'."
+
+  # shellcheck disable=SC1091
+  . "$APPLIANCE_DIR/lib/state.sh"
+  BIBSEE_STATE_FILE="$STATE_FILE"; export BIBSEE_STATE_FILE
+  state_set installed_tag "$IMAGE"
+  ok "Update complete"
+}
+
 main() {
   parse_args "$@"
   if [ "$UNINSTALL" -eq 1 ]; then
     require_root
     uninstall
+    exit 0
+  fi
+  if [ "$UPDATE_ONLY" -eq 1 ]; then
+    detect_local_src
+    update_only
     exit 0
   fi
   detect_local_src
