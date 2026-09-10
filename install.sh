@@ -209,7 +209,23 @@ clock_skew_seconds() {
 
 check_wifi_management() {
   command -v nmcli > /dev/null 2>&1 || return 0
-  wifi_line="$(nmcli -t -f DEVICE,TYPE,STATE device status 2> /dev/null | awk -F: '$2=="wifi"{print; exit}')"
+
+  # NetworkManager has only just been installed. Asking it about devices before
+  # it has settled reports them as unmanaged, which would send the operator off
+  # to fix a problem that does not exist.
+  systemctl start NetworkManager > /dev/null 2>&1 || true
+  tries=0
+  wifi_line=""
+  while [ "$tries" -lt 10 ]; do
+    wifi_line="$(nmcli -t -f DEVICE,TYPE,STATE device status 2> /dev/null | awk -F: '$2=="wifi"{print; exit}')"
+    case "$wifi_line" in
+      *:unmanaged|"") ;;                 # not settled, or genuinely unmanaged
+      *) break ;;                        # managed — nothing more to wait for
+    esac
+    tries=$((tries + 1))
+    sleep 1
+  done
+
   [ -n "$wifi_line" ] || return 0
 
   wifi_dev="${wifi_line%%:*}"
