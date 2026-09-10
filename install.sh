@@ -191,12 +191,64 @@ check_network_interfaces() {
   warn "If you meant to use the other one, disconnect this one and run again."
 }
 
+# A wrong clock does not just spoil race times — apt refuses repository
+# metadata that is not yet valid, and the error it prints says nothing about
+# clocks. A board with no RTC that has been unplugged, or a VM resumed from
+# suspend, arrives here routinely.
+clock_skew_seconds() {
+  remote="$(curl -sI --max-time 10 https://ghcr.io/v2/ 2> /dev/null \
+    | awk 'BEGIN{IGNORECASE=1} /^date:/{sub(/^[Dd]ate: */,""); sub(/\r$/,""); print; exit}')"
+  [ -n "$remote" ] || return 1
+  remote_epoch="$(date -u -d "$remote" +%s 2> /dev/null)" || return 1
+  [ -n "$remote_epoch" ] || return 1
+  local_epoch="$(date -u +%s)"
+  diff=$((remote_epoch - local_epoch))
+  [ "$diff" -lt 0 ] && diff=$((-diff))
+  printf '%s' "$diff"
+}
+
 check_clock() {
   year="$(date +%Y)"
   if [ "$year" -lt 2025 ]; then
-    warn "System clock reads $(date) — a Pi with no RTC boots at epoch. Set the correct time in the TUI before recording passes."
-  else
+    warn "System clock reads $(date) — this machine has no battery-backed clock."
+  fi
+
+  skew="$(clock_skew_seconds || true)"
+  if [ -z "$skew" ]; then
+    ok "Clock: $(date '+%Y-%m-%d %H:%M:%S %Z') (not checked against the network)"
+    return 0
+  fi
+  if [ "$skew" -le 60 ]; then
     ok "Clock: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    return 0
+  fi
+
+  warn "The clock is out by $((skew / 60)) minutes. Correcting it before continuing,"
+  warn "because apt rejects repository metadata when the clock is wrong."
+  timedatectl set-ntp true 2> /dev/null || true
+  if command -v chronyc > /dev/null 2>&1; then
+    chronyc makestep > /dev/null 2>&1 || true
+  fi
+  # Give the time daemon a moment to step the clock.
+  i=0
+  while [ "$i" -lt 10 ]; do
+    skew="$(clock_skew_seconds || true)"
+    [ -n "$skew" ] && [ "$skew" -le 60 ] && break
+    i=$((i + 1))
+    sleep 1
+  done
+
+  if [ -n "$skew" ] && [ "$skew" -le 60 ]; then
+    # Write it back to the hardware clock where there is one, so a reboot does
+    # not land in the same state. Most Pis have none; failing is expected.
+    command -v hwclock > /dev/null 2>&1 && hwclock --systohc 2> /dev/null || true
+    ok "Clock corrected: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  else
+    die "The clock is out by $((skew / 60)) minutes and could not be corrected automatically.
+  Set it by hand and run this again:
+      sudo timedatectl set-ntp true
+  or, with no internet:
+      sudo timedatectl set-time \"$(date '+%Y-%m-%d') HH:MM:SS\""
   fi
 }
 
@@ -246,6 +298,13 @@ install_deps() {
     iproute2 \
     libnss3-tools \
     || die "Package installation failed. Run 'apt-get install' manually to see the error."
+
+  # hwclock lives in util-linux on Debian but was split out on Ubuntu 24.04.
+  # It is only useful on a board that actually has a hardware clock, so this is
+  # opportunistic — never a reason to fail the install.
+  if ! command -v hwclock > /dev/null 2>&1; then
+    apt-get install -y -qq util-linux-extra > /dev/null 2>&1 || true
+  fi
 
   for bin in docker dnsmasq python3 curl dig; do
     have "$bin" || die "Expected '$bin' after installing packages, but it is missing."
@@ -325,8 +384,10 @@ install_payload() {
     ok "Appliance files extracted from $IMAGE"
   fi
 
-  [ -f "$staging/lib/state.sh" ] && [ -x "$staging/tui/bibsee-tui" ] \
-    || die "Appliance payload is incomplete. If you pinned an older --image, use a tag from v0.5.0 onward."
+  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh tui/bibsee-tui; do
+    [ -e "$staging/$required" ] \
+      || die "Appliance payload is missing $required. If you pinned an older --image, use a newer tag."
+  done
 
   chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
   mkdir -p "$(dirname "$APPLIANCE_DIR")"
