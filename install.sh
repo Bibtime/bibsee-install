@@ -14,6 +14,10 @@
 #   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
 #   --console-user U   Account the attached monitor logs in as (default: the
 #                      user running sudo, else the first account on the machine)
+#   --console-font-size SIZE
+#                      Console font size for the Bibsee screen (default 12x24;
+#                      also 16x32, 14x28, 10x20, 8x16)
+#   --no-console-font  Leave the console font alone
 #   --skip-pull        Use the image already present locally (offline installs)
 #   --headless         Do not auto-login and open the Bibsee screen on an
 #                      attached monitor at boot. The screen is still available
@@ -37,6 +41,9 @@ STATE_FILE="/etc/bibsee/state.json"
 MKCERT_VERSION="v1.4.4"
 MIN_FREE_KB=4194304   # 4 GiB
 CERT_RENEW_SECONDS=2592000   # reissue when under 30 days remain
+CONSOLE_FONT_FACE="${BIBSEE_CONSOLE_FONT:-TerminusBold}"
+CONSOLE_FONT_SIZE="${BIBSEE_CONSOLE_FONT_SIZE:-12x24}"
+SET_CONSOLE_FONT=1
 
 SKIP_PULL=0
 HEADLESS=0
@@ -66,6 +73,10 @@ Options (when piping, pass them after `sh -s --`):
   --timezone NAME    Time zone, e.g. America/New_York (default: leave as-is)
   --console-user U   Account the attached monitor logs in as (default: the
                      user running sudo, else the first account on the machine)
+  --console-font-size SIZE
+                     Console font size for the Bibsee screen (default 12x24;
+                     also 16x32, 14x28, 10x20, 8x16)
+  --no-console-font  Leave the console font alone
   --skip-pull        Use the image already present locally (offline installs)
   --headless         Do not auto-login and open the Bibsee screen on an
                      attached monitor at boot. The screen is still available
@@ -86,6 +97,8 @@ parse_args() {
       --console-user) [ $# -ge 2 ] || die "--console-user needs a value"; CONSOLE_USER="$2"; shift 2 ;;
       --skip-pull)    SKIP_PULL=1; shift ;;
       --headless)     HEADLESS=1; shift ;;
+      --console-font-size) [ $# -ge 2 ] || die "--console-font-size needs a value"; CONSOLE_FONT_SIZE="$2"; shift 2 ;;
+      --no-console-font)   SET_CONSOLE_FONT=0; shift ;;
       --uninstall)    UNINSTALL=1; shift ;;
       --purge)        PURGE=1; shift ;;
       --help|-h)      usage; exit 0 ;;
@@ -670,6 +683,33 @@ remove_console_autologin() {
   return 0
 }
 
+# The Bibsee screen draws a framed box. Some images ship a console font without
+# the rounded box-drawing characters it uses, so the frame renders broken, and
+# the default size is small to read across a table. Only done when the console
+# is actually Bibsee's interface — never under --headless.
+set_console_font() {
+  [ "$SET_CONSOLE_FONT" -eq 1 ] || return 0
+  [ -f /etc/default/console-setup ] || return 0
+  command -v setupcon > /dev/null 2>&1 || return 0
+
+  if grep -q '^FONTFACE=' /etc/default/console-setup; then
+    sed -i "s/^FONTFACE=.*/FONTFACE=\"$CONSOLE_FONT_FACE\"/" /etc/default/console-setup
+  else
+    printf 'FONTFACE="%s"\n' "$CONSOLE_FONT_FACE" >> /etc/default/console-setup
+  fi
+  if grep -q '^FONTSIZE=' /etc/default/console-setup; then
+    sed -i "s/^FONTSIZE=.*/FONTSIZE=\"$CONSOLE_FONT_SIZE\"/" /etc/default/console-setup
+  else
+    printf 'FONTSIZE="%s"\n' "$CONSOLE_FONT_SIZE" >> /etc/default/console-setup
+  fi
+
+  if setupcon --force > /dev/null 2>&1; then
+    ok "Console font: $CONSOLE_FONT_FACE $CONSOLE_FONT_SIZE (--console-font-size to change)"
+  else
+    warn "Could not apply the console font; the Bibsee screen may look cramped."
+  fi
+}
+
 install_console_tui() {
   if [ "$HEADLESS" -eq 1 ]; then
     step "Not opening the Bibsee screen at boot (--headless)"
@@ -698,6 +738,8 @@ install_console_tui() {
     fi
     warn "Everything else works either way; open Bibsee at https://$DOMAIN."
   fi
+
+  set_console_font
 
   AUTOLOGIN_USER="$(console_user)"
   [ -n "$AUTOLOGIN_USER" ] || { warn "No console user found — skipping autologin"; return 0; }
