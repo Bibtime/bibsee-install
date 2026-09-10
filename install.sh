@@ -719,8 +719,8 @@ install_console_tui() {
     else
       ok "tty1 keeps its normal login prompt"
     fi
-    ok "Open the screen any time: $APPLIANCE_DIR/tui/bibsee-tui"
-    ok "Read the current PIN: $APPLIANCE_DIR/tui/bibsee-tui pin"
+    ok "Open the screen any time: bibsee"
+    ok "Read the current PIN: bibsee pin"
     return 0
   fi
   step "Setting up the Bibsee screen on the attached monitor"
@@ -772,6 +772,19 @@ EOF
   warn "The monitor now logs in as '$AUTOLOGIN_USER' automatically, no password."
   warn "Anyone at this machine's keyboard has a shell. That is the point on a"
   warn "race-day appliance; re-run with --headless if it is not what you want."
+}
+
+# A shell alias would only work for one user in one shell. A link on PATH works
+# for anyone who quits the screen and wants it back.
+install_command() {
+  step "Installing the bibsee command"
+  mkdir -p /usr/local/bin
+  ln -sf "$APPLIANCE_DIR/tui/bibsee-tui" /usr/local/bin/bibsee
+  if [ -x /usr/local/bin/bibsee ]; then
+    ok "Type 'bibsee' for the screen, or 'bibsee pin' for the current PIN"
+  else
+    warn "Could not link /usr/local/bin/bibsee; use $APPLIANCE_DIR/tui/bibsee-tui"
+  fi
 }
 
 write_state() {
@@ -909,11 +922,11 @@ EOF
     printf '        --headless to restore the normal login prompt.\n\n'
   fi
   if [ "$HEADLESS" -eq 1 ]; then
-    printf '  Manage Bibsee:  %s/tui/bibsee-tui\n' "$APPLIANCE_DIR"
-    printf '  Current PIN:    %s/tui/bibsee-tui pin\n' "$APPLIANCE_DIR"
+    printf '  Manage Bibsee:  bibsee\n'
+    printf '  Current PIN:    bibsee pin\n' 
     printf '                  (the PIN changes every time Bibsee starts)\n\n'
   else
-    printf '  Manage Bibsee:  reboot, or run %s/tui/bibsee-tui\n\n' "$APPLIANCE_DIR"
+    printf '  Manage Bibsee:  reboot, or type: bibsee\n\n' 
   fi
 }
 
@@ -942,7 +955,7 @@ uninstall() {
     ok "Console autologin removed — tty1 asks for a password again"
   fi
 
-  rm -f /etc/sudoers.d/bibsee
+  rm -f /etc/sudoers.d/bibsee /usr/local/bin/bibsee
   rm -rf /opt/bibsee "$STATE_FILE"
   rmdir /etc/bibsee 2> /dev/null || true
   ok "Appliance files removed"
@@ -975,6 +988,7 @@ main() {
   setup_tls
   grant_clock_privileges
   install_console_tui
+  install_command
   start_bibsee
   write_state
   verify
