@@ -636,24 +636,25 @@ console_user() {
 # root-only. Grant exactly those commands and nothing else, with no password —
 # a prompt would have nowhere to render inside a full-screen TUI.
 grant_clock_privileges() {
-  step "Allowing the console user to set the clock and republish the address"
+  step "Allowing the console user to manage the clock, network and address"
   user="$(console_user)"
   [ -n "$user" ] || { warn "No console user found — skipping"; return 0; }
 
   tmp="/etc/sudoers.d/bibsee.tmp.$$"
   {
     printf '# Managed by bibsee install.sh — lets the Bibsee TUI fix a wrong clock\n'
-    printf '%s ALL=(root) NOPASSWD: %s, %s, %s, %s\n' "$user" \
+    printf '%s ALL=(root) NOPASSWD: %s, %s, %s, %s, %s\n' "$user" \
       "$(command -v timedatectl || echo /usr/bin/timedatectl)" \
       "$(command -v hwclock || echo /sbin/hwclock)" \
       "$(command -v date || echo /bin/date)" \
+      "$(command -v nmcli || echo /usr/bin/nmcli)" \
       "$APPLIANCE_DIR/update-address.sh"
   } > "$tmp"
   chmod 0440 "$tmp"
 
   if visudo -cf "$tmp" > /dev/null 2>&1; then
     mv "$tmp" /etc/sudoers.d/bibsee
-    ok "$user may set the clock and republish the address from the TUI"
+    ok "$user may set the clock, join Wi-Fi and republish the address"
   else
     rm -f "$tmp"
     warn "sudoers rule rejected — setting the clock from the TUI will not work"
