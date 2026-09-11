@@ -758,7 +758,9 @@ set_console_font() {
     printf 'CODESET="%s"\n' "$CONSOLE_CODESET" >> /etc/default/console-setup
   fi
 
-  if setupcon --force > /dev/null 2>&1; then
+  # --save regenerates the cached font the boot uses, so a change made here is
+  # the one the next boot draws with rather than whatever was cached before.
+  if setupcon --force --save > /dev/null 2>&1; then
     ok "Console font: $CONSOLE_FONT_FACE $CONSOLE_FONT_SIZE (--console-font-size to change)"
   else
     warn "Could not apply the console font; the Bibsee screen may look cramped."
@@ -1034,8 +1036,22 @@ update_only() {
   require_root
   detect_arch
   check_network
-  pull_image
-  install_payload
+  if [ "${BIBSEE_UPDATE_FINISH:-0}" != 1 ]; then
+    pull_image
+    install_payload
+    # Everything from here on is done by the script that just arrived, not
+    # this one. `--update` is run from the installed copy, so without this
+    # hand-off anything new in the update path — a sysctl, a font — ran one
+    # release late: the old script pulled the new image and then carried on
+    # with its own, older idea of what an update does.
+    #
+    # An environment variable rather than a flag, so that an older script
+    # (a downgrade with --image) simply runs its own update in full instead
+    # of refusing an option it has never heard of.
+    if [ -x "$APPLIANCE_DIR/install.sh" ]; then
+      BIBSEE_UPDATE_FINISH=1 exec "$APPLIANCE_DIR/install.sh" --update --image "$IMAGE"
+    fi
+  fi
   grant_clock_privileges
   install_command
   # Machines set up before this existed get it on their next update. Only
