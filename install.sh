@@ -676,10 +676,35 @@ grant_clock_privileges() {
   fi
 }
 
+CONSOLE_SYSCTL=/etc/sysctl.d/90-bibsee-console.conf
+
+# Keep the kernel from writing over the Bibsee screen.
+#
+# The kernel echoes any log line at or above its console level onto the active
+# console. Raspberry Pi OS Lite boots with that level at 7 — everything — and
+# boot scripts keep logging for a while after the screen has opened, so a line
+# like "Completed socket interaction for boot stage finale" lands across the
+# menu. Level 4 is what the `quiet` boot option sets: errors and worse still
+# show, which they should; chatter does not. Written to sysctl.d so it holds
+# across boots, and applied now for this one.
+quiet_console() {
+  cat > "$CONSOLE_SYSCTL" <<EOF
+# Bibsee: keep boot chatter off the console the Bibsee screen is on.
+# Errors and worse still show. Same as the "quiet" kernel option.
+kernel.printk = 4 4 1 7
+EOF
+  sysctl -q -p "$CONSOLE_SYSCTL" 2> /dev/null || true
+  ok "Boot chatter kept off the Bibsee screen"
+}
+
 # Undo the console autologin. Shared by --headless and --uninstall, so that
 # --headless is a real toggle rather than a flag that only skips setting it up.
 remove_console_autologin() {
   removed=0
+  if [ -f "$CONSOLE_SYSCTL" ]; then
+    rm -f "$CONSOLE_SYSCTL"
+    removed=1
+  fi
   if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ]; then
     rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
     rmdir /etc/systemd/system/getty@tty1.service.d 2> /dev/null || true
@@ -773,6 +798,7 @@ EOF
       "$APPLIANCE_DIR" >> "$BASHRC"
   fi
   usermod -aG docker "$AUTOLOGIN_USER" 2> /dev/null || true
+  quiet_console
 
   systemctl daemon-reload
   # Restarting the console getty kills whatever is running on it. Installing
@@ -960,6 +986,7 @@ uninstall() {
   if who 2> /dev/null | grep -q "tty1"; then
     rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf
     rmdir /etc/systemd/system/getty@tty1.service.d 2> /dev/null || true
+    rm -f "$CONSOLE_SYSCTL"
     for home in /home/*; do
       [ -f "$home/.bashrc" ] || continue
       sed -i '/bibsee-tui/d;/# Bibsee TUI on console login/d' "$home/.bashrc" 2> /dev/null || true
@@ -997,6 +1024,12 @@ update_only() {
   install_payload
   grant_clock_privileges
   install_command
+  # Machines set up before this existed get it on their next update. Only
+  # where the console is the Bibsee screen; a headless box keeps its kernel
+  # messages.
+  if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ] && [ ! -f "$CONSOLE_SYSCTL" ]; then
+    quiet_console
+  fi
   step "Restarting Bibsee"
   BIBSEE_IMAGE="$IMAGE"; BIBSEE_CONTAINER="$CONTAINER"; BIBSEE_DOMAIN="$DOMAIN"
   BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"
