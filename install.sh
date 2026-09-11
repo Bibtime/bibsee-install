@@ -45,6 +45,15 @@ MIN_FREE_KB=4194304   # 4 GiB
 CERT_RENEW_SECONDS=2592000   # reissue when under 30 days remain
 CONSOLE_FONT_FACE="${BIBSEE_CONSOLE_FONT:-TerminusBold}"
 CONSOLE_FONT_SIZE="${BIBSEE_CONSOLE_FONT_SIZE:-12x24}"
+# Which glyphs the console font carries. A console font holds a few hundred
+# glyphs, chosen by codeset; the locale's default for English is Lat15, and
+# Lat15 lacks half the symbols the Bibsee screen draws — the ▀▄ that make a QR
+# code, ○, and the ✓ on every success message come out as "?". Of the codesets
+# Debian builds for this face, "Vietnamese" is the one with the widest Latin
+# symbol set: same Terminus glyphs for ASCII, plus all the box drawing, the
+# blocks and shades, and the marks. The name is about accented letters it
+# also carries; nothing else changes.
+CONSOLE_CODESET="${BIBSEE_CONSOLE_CODESET:-Vietnamese}"
 SET_CONSOLE_FONT=1
 
 SKIP_PULL=0
@@ -743,6 +752,11 @@ set_console_font() {
   else
     printf 'FONTSIZE="%s"\n' "$CONSOLE_FONT_SIZE" >> /etc/default/console-setup
   fi
+  if grep -q '^CODESET=' /etc/default/console-setup; then
+    sed -i "s/^CODESET=.*/CODESET=\"$CONSOLE_CODESET\"/" /etc/default/console-setup
+  else
+    printf 'CODESET="%s"\n' "$CONSOLE_CODESET" >> /etc/default/console-setup
+  fi
 
   if setupcon --force > /dev/null 2>&1; then
     ok "Console font: $CONSOLE_FONT_FACE $CONSOLE_FONT_SIZE (--console-font-size to change)"
@@ -1029,6 +1043,16 @@ update_only() {
   # messages.
   if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ] && [ ! -f "$CONSOLE_SYSCTL" ]; then
     quiet_console
+  fi
+  # The glyphs the screen can draw are part of the screen, so an update that
+  # starts drawing new ones brings the font along. Face and size are whatever
+  # the machine already has; only the codeset line is reasserted.
+  if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ] && [ -f /etc/default/console-setup ]; then
+    if ! grep -q "^CODESET=\"$CONSOLE_CODESET\"" /etc/default/console-setup; then
+      CONSOLE_FONT_FACE="$(sed -n 's/^FONTFACE="\(.*\)"/\1/p' /etc/default/console-setup)"
+      CONSOLE_FONT_SIZE="$(sed -n 's/^FONTSIZE="\(.*\)"/\1/p' /etc/default/console-setup)"
+      [ -n "$CONSOLE_FONT_FACE" ] && [ -n "$CONSOLE_FONT_SIZE" ] && set_console_font
+    fi
   fi
   step "Restarting Bibsee"
   BIBSEE_IMAGE="$IMAGE"; BIBSEE_CONTAINER="$CONTAINER"; BIBSEE_DOMAIN="$DOMAIN"
