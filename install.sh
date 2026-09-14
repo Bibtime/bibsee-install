@@ -474,7 +474,7 @@ install_payload() {
   if [ -n "$LOCAL_SRC" ]; then
     cp -R "$LOCAL_SRC/lib" "$staging/lib"
     cp "$LOCAL_SRC/wifi.sh" "$LOCAL_SRC/install.sh" "$LOCAL_SRC/update-address.sh" \
-       "$LOCAL_SRC/enable-wifi-switching.sh" "$staging/"
+       "$LOCAL_SRC/enable-wifi-switching.sh" "$LOCAL_SRC/system-update.sh" "$staging/"
     mkdir -p "$staging/tui"
     if [ -x "$LOCAL_SRC/tui/bibsee-tui" ] && "$LOCAL_SRC/tui/bibsee-tui" --help > /dev/null 2>&1; then
       cp "$LOCAL_SRC/tui/bibsee-tui" "$staging/tui/bibsee-tui"
@@ -492,13 +492,13 @@ install_payload() {
     ok "Appliance files extracted from $IMAGE"
   fi
 
-  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh enable-wifi-switching.sh tui/bibsee-tui; do
+  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh enable-wifi-switching.sh system-update.sh tui/bibsee-tui; do
     [ -e "$staging/$required" ] \
       || die "Appliance payload is missing $required. If you pinned an older --image, use a newer tag."
   done
 
   chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" \
-    "$staging/enable-wifi-switching.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
+    "$staging/enable-wifi-switching.sh" "$staging/system-update.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
   mkdir -p "$(dirname "$APPLIANCE_DIR")"
   rm -rf "$APPLIANCE_DIR"
   mv "$staging" "$APPLIANCE_DIR"
@@ -672,7 +672,7 @@ grant_clock_privileges() {
       "$(command -v hwclock || echo /sbin/hwclock)" \
       "$(command -v date || echo /bin/date)" \
       "$(command -v nmcli || echo /usr/bin/nmcli)" \
-      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh --update"
+      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh --update, $APPLIANCE_DIR/system-update.sh"
   } > "$tmp"
   chmod 0440 "$tmp"
 
