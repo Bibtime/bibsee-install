@@ -389,6 +389,7 @@ install_deps() {
     dnsmasq \
     chrony \
     sqlite3 \
+    exfatprogs \
     ethtool \
     iw \
     wireless-regdb \
@@ -474,7 +475,7 @@ install_payload() {
   if [ -n "$LOCAL_SRC" ]; then
     cp -R "$LOCAL_SRC/lib" "$staging/lib"
     cp "$LOCAL_SRC/wifi.sh" "$LOCAL_SRC/install.sh" "$LOCAL_SRC/update-address.sh" \
-       "$LOCAL_SRC/enable-wifi-switching.sh" "$LOCAL_SRC/system-update.sh" "$staging/"
+       "$LOCAL_SRC/enable-wifi-switching.sh" "$LOCAL_SRC/system-update.sh" "$LOCAL_SRC/backup.sh" "$staging/"
     mkdir -p "$staging/tui"
     if [ -x "$LOCAL_SRC/tui/bibsee-tui" ] && "$LOCAL_SRC/tui/bibsee-tui" --help > /dev/null 2>&1; then
       cp "$LOCAL_SRC/tui/bibsee-tui" "$staging/tui/bibsee-tui"
@@ -492,13 +493,13 @@ install_payload() {
     ok "Appliance files extracted from $IMAGE"
   fi
 
-  for required in lib/state.sh lib/net.sh lib/docker.sh wifi.sh update-address.sh enable-wifi-switching.sh system-update.sh tui/bibsee-tui; do
+  for required in lib/state.sh lib/net.sh lib/docker.sh lib/backup.sh wifi.sh update-address.sh enable-wifi-switching.sh system-update.sh backup.sh tui/bibsee-tui; do
     [ -e "$staging/$required" ] \
       || die "Appliance payload is missing $required. If you pinned an older --image, use a newer tag."
   done
 
   chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" \
-    "$staging/enable-wifi-switching.sh" "$staging/system-update.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
+    "$staging/enable-wifi-switching.sh" "$staging/system-update.sh" "$staging/backup.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
   mkdir -p "$(dirname "$APPLIANCE_DIR")"
   rm -rf "$APPLIANCE_DIR"
   mv "$staging" "$APPLIANCE_DIR"
@@ -672,7 +673,7 @@ grant_clock_privileges() {
       "$(command -v hwclock || echo /sbin/hwclock)" \
       "$(command -v date || echo /bin/date)" \
       "$(command -v nmcli || echo /usr/bin/nmcli)" \
-      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh --update, $APPLIANCE_DIR/system-update.sh"
+      "$APPLIANCE_DIR/update-address.sh, $APPLIANCE_DIR/install.sh --update, $APPLIANCE_DIR/system-update.sh, $APPLIANCE_DIR/backup.sh"
   } > "$tmp"
   chmod 0440 "$tmp"
 
@@ -686,6 +687,54 @@ grant_clock_privileges() {
 }
 
 CONSOLE_SYSCTL=/etc/sysctl.d/90-bibsee-console.conf
+BACKUP_MINUTES="${BIBSEE_BACKUP_MINUTES:-2}"
+
+# The mid-race backup: every two minutes, if the database changed, a snapshot
+# onto the card and a copy onto a USB stick if one is in. A systemd timer
+# rather than something inside the container, because the stick is the
+# host's to mount. BIBSEE_BACKUP_MINUTES=0 leaves it out.
+install_backup_timer() {
+  if [ "$BACKUP_MINUTES" = "0" ]; then
+    step "Not installing the backup timer (BIBSEE_BACKUP_MINUTES=0)"
+    return 0
+  fi
+  step "Installing the backup timer (every $BACKUP_MINUTES min, to the card and a USB stick)"
+  cat > /etc/systemd/system/bibsee-backup.service <<EOF
+[Unit]
+Description=Bibsee backup: snapshot the race, copy to a USB stick
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=BIBSEE_VOLUME_DIR=$VOLUME_DIR
+Environment=BIBSEE_CONSOLE_USER=$(console_user 2> /dev/null || echo root)
+ExecStart=$APPLIANCE_DIR/backup.sh run
+EOF
+  cat > /etc/systemd/system/bibsee-backup.timer <<EOF
+[Unit]
+Description=Bibsee backup, every $BACKUP_MINUTES minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=${BACKUP_MINUTES}min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+EOF
+  mkdir -p /media/bibsee
+  systemctl daemon-reload
+  systemctl enable --now bibsee-backup.timer > /dev/null 2>&1 || warn "Could not start the backup timer"
+  ok "Backups every $BACKUP_MINUTES minutes: $VOLUME_DIR/backups, and any USB stick"
+}
+
+remove_backup_timer() {
+  systemctl disable --now bibsee-backup.timer > /dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bibsee-backup.timer /etc/systemd/system/bibsee-backup.service
+  systemctl daemon-reload > /dev/null 2>&1 || true
+  # Whatever stick is in, let go of it.
+  [ -x "$APPLIANCE_DIR/backup.sh" ] && "$APPLIANCE_DIR/backup.sh" eject > /dev/null 2>&1 || true
+}
 
 # Keep the kernel from writing over the Bibsee screen.
 #
@@ -1014,6 +1063,7 @@ uninstall() {
     ok "Console autologin removed — tty1 asks for a password again"
   fi
 
+  remove_backup_timer
   rm -f /etc/sudoers.d/bibsee /usr/local/bin/bibsee
   rm -rf /opt/bibsee "$STATE_FILE"
   rmdir /etc/bibsee 2> /dev/null || true
@@ -1054,6 +1104,8 @@ update_only() {
   fi
   grant_clock_privileges
   install_command
+  # Machines set up before backups existed get the timer on their next update.
+  [ -f /etc/systemd/system/bibsee-backup.timer ] || install_backup_timer
   # Machines set up before this existed get it on their next update. Only
   # where the console is the Bibsee screen; a headless box keeps its kernel
   # messages.
@@ -1120,6 +1172,7 @@ main() {
   grant_clock_privileges
   install_console_tui
   install_command
+  install_backup_timer
   start_bibsee
   write_state
   verify
