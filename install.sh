@@ -906,6 +906,18 @@ write_state() {
   state_set lan_ip "$PI_IP"
   state_set was_running true
   ok "State written to $STATE_FILE"
+  hand_state_to_console_user
+}
+
+# The screen writes to the state file too (the runners' guest network), and
+# it runs as the console user, not root. Writes go through a temp file and a
+# rename, so the user needs the directory as well as the file.
+hand_state_to_console_user() {
+  user="$(console_user 2> /dev/null || true)"
+  [ -n "$user" ] || return 0
+  [ -f "$STATE_FILE" ] || return 0
+  chown "$user" "$(dirname "$STATE_FILE")" "$STATE_FILE" 2> /dev/null \
+    || warn "Could not hand $STATE_FILE to $user — the guest network will not save from the screen"
 }
 
 start_bibsee() {
@@ -1144,6 +1156,9 @@ update_only() {
   . "$APPLIANCE_DIR/lib/state.sh"
   BIBSEE_STATE_FILE="$STATE_FILE"; export BIBSEE_STATE_FILE
   state_set installed_tag "$IMAGE"
+  # Machines set up before the screen wrote to this file get it on their
+  # next update. (Root's state_set above has just recreated it as root's.)
+  hand_state_to_console_user
   ok "Update complete"
 }
 
