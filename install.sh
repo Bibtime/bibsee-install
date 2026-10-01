@@ -1,7 +1,10 @@
 #!/bin/sh
 # install.sh — Bibsee appliance installer
 #
-#   curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh
+#   curl https://get.bibsee.com | sh
+#
+# That URL serves get.sh, which fetches this file and runs it as root. This
+# script itself expects to be root already.
 #
 # Runs standalone: everything it needs beyond the base OS (management scripts,
 # the Go TUI) is extracted from the public Bibsee image, so the script has no
@@ -76,7 +79,7 @@ usage() {
   cat <<'EOF'
 install.sh — Bibsee appliance installer
 
-  curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh
+  curl https://get.bibsee.com | sh
 
 Options (when piping, pass them after `sh -s --`):
   --image REF        Image to install         (default ghcr.io/bibtime/bibsee:latest)
