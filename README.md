@@ -15,7 +15,15 @@ public container image, `ghcr.io/bibtime/bibsee`.
 On a fresh machine:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh
+curl https://get.bibsee.com | sh
+```
+
+That URL serves `get.sh` in this repo, which downloads `install.sh` — the file
+beside it — and runs it as root, asking for your password through `sudo`. To
+read the installer first:
+
+```sh
+curl https://get.bibsee.com/install.sh | less
 ```
 
 The installer is safe to re-run. It stops the running container, keeps your race
@@ -54,7 +62,7 @@ everything back up on the current image.
 Pass options after `sh -s --`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh -s -- --timezone America/New_York
+curl https://get.bibsee.com | sh -s -- --timezone America/New_York
 ```
 
 | Option | Meaning |
@@ -89,7 +97,7 @@ one — you want a screen that works without credentials at 6am. On a machine th
 already exists and does other things, it is not. Pass `--headless`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh -s -- --headless
+curl https://get.bibsee.com | sh -s -- --headless
 ```
 
 `--headless` is a real toggle, not just a skip: run it on a machine that already
@@ -123,7 +131,7 @@ screen.
 ## Uninstalling
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Bibtime/bibsee-install/main/install.sh | sudo sh -s -- --uninstall
+curl https://get.bibsee.com | sh -s -- --uninstall
 ```
 
 Race data and certificates are kept unless you add `--purge`.

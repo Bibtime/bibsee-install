@@ -60,7 +60,7 @@ run_installer() {
 
   have sudo || die "Run this as root — it installs system services and writes to /etc."
   printf '  Bibsee installs system services, so the next step needs root.\n'
-  printf '  sudo will ask for your password.\n\n'
+  printf '  sudo may ask for your password.\n\n'
 
   set -- sh "$installer" "$@"
   for name in $INSTALLER_ENV; do
