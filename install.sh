@@ -41,6 +41,7 @@ CONTAINER="bibsee"
 VOLUME_DIR="/var/lib/bibsee"
 CERTS_DIR="$VOLUME_DIR/certs"
 RUN_DIR="/var/run/bibsee"
+IMPORTS_DIR="/var/lib/bibsee-imports"
 APPLIANCE_DIR="/opt/bibsee/appliance"
 STATE_FILE="/etc/bibsee/state.json"
 MKCERT_VERSION="v1.4.4"
@@ -569,6 +570,26 @@ setup_volumes() {
   ok "Data at $VOLUME_DIR"
 }
 
+# Registration exports copied to the box over scp, one folder per race, made
+# by the app. Outside the data volume, which is root's alone, and owned by
+# the console user so they can copy into it without sudo. The app runs as
+# root and hands each race folder to this folder's owner.
+setup_imports_dir() {
+  step "Creating the import folder"
+  mkdir -p "$IMPORTS_DIR"
+  user="$(console_user 2> /dev/null || true)"
+  if [ -n "$user" ]; then
+    chown "$user" "$IMPORTS_DIR" \
+      || warn "Could not hand $IMPORTS_DIR to $user — copying exports to the box will need sudo"
+    # Race folders made before this ran (or by an older release) too.
+    for d in "$IMPORTS_DIR"/race-*; do
+      if [ -d "$d" ]; then chown -R "$user" "$d" || true; fi
+    done
+  fi
+  chmod 755 "$IMPORTS_DIR"
+  ok "Exports can be copied to $IMPORTS_DIR"
+}
+
 local_ip() {
   ip -4 route get 1.1.1.1 2> /dev/null \
     | awk '/src/{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}'
@@ -926,8 +947,8 @@ hand_state_to_console_user() {
 start_bibsee() {
   step "Starting Bibsee"
   BIBSEE_IMAGE="$IMAGE"; BIBSEE_CONTAINER="$CONTAINER"; BIBSEE_DOMAIN="$DOMAIN"
-  BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"
-  export BIBSEE_IMAGE BIBSEE_CONTAINER BIBSEE_DOMAIN BIBSEE_VOLUME_DIR BIBSEE_RUN_DIR
+  BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"; BIBSEE_IMPORTS_DIR="$IMPORTS_DIR"
+  export BIBSEE_IMAGE BIBSEE_CONTAINER BIBSEE_DOMAIN BIBSEE_VOLUME_DIR BIBSEE_RUN_DIR BIBSEE_IMPORTS_DIR
   # shellcheck disable=SC1091
   . "$APPLIANCE_DIR/lib/docker.sh"
   container_start || die "Could not start the Bibsee container. Check 'docker logs $CONTAINER'."
@@ -1137,10 +1158,13 @@ update_only() {
       [ -n "$CONSOLE_FONT_FACE" ] && [ -n "$CONSOLE_FONT_SIZE" ] && set_console_font
     fi
   fi
+  # Machines set up before import folders get one on their next update, before
+  # the container is made with it mounted: docker would make it as root.
+  setup_imports_dir
   step "Restarting Bibsee"
   BIBSEE_IMAGE="$IMAGE"; BIBSEE_CONTAINER="$CONTAINER"; BIBSEE_DOMAIN="$DOMAIN"
-  BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"
-  export BIBSEE_IMAGE BIBSEE_CONTAINER BIBSEE_DOMAIN BIBSEE_VOLUME_DIR BIBSEE_RUN_DIR
+  BIBSEE_VOLUME_DIR="$VOLUME_DIR"; BIBSEE_RUN_DIR="$RUN_DIR"; BIBSEE_IMPORTS_DIR="$IMPORTS_DIR"
+  export BIBSEE_IMAGE BIBSEE_CONTAINER BIBSEE_DOMAIN BIBSEE_VOLUME_DIR BIBSEE_RUN_DIR BIBSEE_IMPORTS_DIR
   # shellcheck disable=SC1091
   . "$APPLIANCE_DIR/lib/docker.sh"
   container_stop
@@ -1185,6 +1209,7 @@ main() {
   set_wifi_country
   setup_timezone
   setup_volumes
+  setup_imports_dir
   setup_dns
   setup_tls
   grant_clock_privileges
