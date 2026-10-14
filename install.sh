@@ -539,6 +539,17 @@ set_wifi_country() {
   ok "Wi-Fi country: $WIFI_COUNTRY"
 }
 
+# Wi-Fi power saving off, now and for every later connection. On, it made the
+# Pi slow to answer the iPads over the air — a delay on every tap. The logic is
+# lib/net.sh's, from the payload just installed.
+wifi_powersave_off() {
+  [ -f "$APPLIANCE_DIR/lib/net.sh" ] || return 0
+  # shellcheck disable=SC1091
+  . "$APPLIANCE_DIR/lib/net.sh"
+  net_wifi_powersave_off
+  ok "Wi-Fi power saving off"
+}
+
 current_timezone() {
   timedatectl show --property=Timezone --value 2> /dev/null \
     || cat /etc/timezone 2> /dev/null \
@@ -1166,6 +1177,9 @@ update_only() {
   fi
   grant_clock_privileges
   install_command
+  # Every update, not only once: cheap, and a box that was set up before this
+  # gets it too.
+  wifi_powersave_off
   # Machines set up before backups existed get the timer on their next update.
   [ -f /etc/systemd/system/bibsee-backup.timer ] || install_backup_timer
   remove_withdrawn_dns
@@ -1234,6 +1248,7 @@ main() {
   pull_image
   install_payload
   set_wifi_country
+  wifi_powersave_off
   setup_timezone
   setup_volumes
   setup_imports_dir
