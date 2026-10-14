@@ -479,7 +479,8 @@ install_payload() {
   if [ -n "$LOCAL_SRC" ]; then
     cp -R "$LOCAL_SRC/lib" "$staging/lib"
     cp "$LOCAL_SRC/wifi.sh" "$LOCAL_SRC/install.sh" "$LOCAL_SRC/update-address.sh" \
-       "$LOCAL_SRC/enable-wifi-switching.sh" "$LOCAL_SRC/system-update.sh" "$LOCAL_SRC/backup.sh" "$staging/"
+       "$LOCAL_SRC/enable-wifi-switching.sh" "$LOCAL_SRC/system-update.sh" "$LOCAL_SRC/backup.sh" \
+       "$LOCAL_SRC/offline-dns.sh" "$staging/"
     mkdir -p "$staging/tui"
     if [ -x "$LOCAL_SRC/tui/bibsee-tui" ] && "$LOCAL_SRC/tui/bibsee-tui" --help > /dev/null 2>&1; then
       cp "$LOCAL_SRC/tui/bibsee-tui" "$staging/tui/bibsee-tui"
@@ -497,13 +498,14 @@ install_payload() {
     ok "Appliance files extracted from $IMAGE"
   fi
 
-  for required in lib/state.sh lib/net.sh lib/docker.sh lib/backup.sh wifi.sh update-address.sh enable-wifi-switching.sh system-update.sh backup.sh tui/bibsee-tui; do
+  for required in lib/state.sh lib/net.sh lib/docker.sh lib/backup.sh wifi.sh update-address.sh enable-wifi-switching.sh system-update.sh backup.sh offline-dns.sh tui/bibsee-tui; do
     [ -e "$staging/$required" ] \
       || die "Appliance payload is missing $required. If you pinned an older --image, use a newer tag."
   done
 
   chmod +x "$staging/wifi.sh" "$staging/install.sh" "$staging/update-address.sh" \
-    "$staging/enable-wifi-switching.sh" "$staging/system-update.sh" "$staging/backup.sh" "$staging/tui/bibsee-tui" 2> /dev/null || true
+    "$staging/enable-wifi-switching.sh" "$staging/system-update.sh" "$staging/backup.sh" "$staging/offline-dns.sh" \
+    "$staging/tui/bibsee-tui" 2> /dev/null || true
   mkdir -p "$(dirname "$APPLIANCE_DIR")"
   rm -rf "$APPLIANCE_DIR"
   mv "$staging" "$APPLIANCE_DIR"
@@ -607,6 +609,7 @@ setup_dns() {
   free_port_53
   cat > /etc/dnsmasq.d/bibsee.conf <<EOF
 # Managed by bibsee install.sh — do not edit by hand
+local=/$DOMAIN/
 address=/$DOMAIN/$PI_IP
 address=/.$DOMAIN/$PI_IP
 address=/www.$DOMAIN/$PI_IP
@@ -750,6 +753,45 @@ EOF
   systemctl daemon-reload
   systemctl enable --now bibsee-backup.timer > /dev/null 2>&1 || warn "Could not start the backup timer"
   ok "Backups every $BACKUP_MINUTES minutes: $VOLUME_DIR/backups, and any USB stick"
+}
+
+# With no internet, dnsmasq answers every name but bibsee.work at once instead
+# of passing it on and waiting out a timeout — phones joining the network sat
+# on "no connection" for half a minute while their internet check did that.
+# offline-dns.sh looks every 20 seconds and switches when it changes.
+install_offline_dns_timer() {
+  step "Installing the offline DNS switch"
+  cat > /etc/systemd/system/bibsee-offline-dns.service <<EOF
+[Unit]
+Description=Bibsee: answer DNS on its own while there is no internet
+After=dnsmasq.service
+
+[Service]
+Type=oneshot
+ExecStart=$APPLIANCE_DIR/offline-dns.sh run
+EOF
+  cat > /etc/systemd/system/bibsee-offline-dns.timer <<EOF
+[Unit]
+Description=Bibsee offline DNS switch, every 20 seconds
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now bibsee-offline-dns.timer > /dev/null 2>&1 || warn "Could not start the offline DNS switch"
+  ok "With no internet, names other than $DOMAIN are answered at once"
+}
+
+remove_offline_dns_timer() {
+  systemctl disable --now bibsee-offline-dns.timer > /dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bibsee-offline-dns.timer /etc/systemd/system/bibsee-offline-dns.service \
+    /etc/dnsmasq.d/bibsee-offline.conf
+  systemctl daemon-reload > /dev/null 2>&1 || true
 }
 
 remove_backup_timer() {
@@ -1080,6 +1122,7 @@ uninstall() {
   docker rm   "$CONTAINER" > /dev/null 2>&1 || true
   ok "Container removed"
 
+  remove_offline_dns_timer
   rm -f /etc/dnsmasq.d/bibsee.conf
   systemctl restart dnsmasq > /dev/null 2>&1 || true
   ok "dnsmasq config removed"
@@ -1142,6 +1185,16 @@ update_only() {
   install_command
   # Machines set up before backups existed get the timer on their next update.
   [ -f /etc/systemd/system/bibsee-backup.timer ] || install_backup_timer
+  # Machines set up before these get them on their next update: bibsee.work
+  # answered here for IPv6 too (that lookup went to the internet and waited),
+  # and the offline switch.
+  # The name comes from the file, not --domain, which an update is not given.
+  if [ -f /etc/dnsmasq.d/bibsee.conf ] && ! grep -q '^local=/' /etc/dnsmasq.d/bibsee.conf; then
+    dns_name="$(sed -n 's|^address=/\([^./][^/]*\)/.*|\1|p' /etc/dnsmasq.d/bibsee.conf | head -1)"
+    [ -n "$dns_name" ] && printf 'local=/%s/\n' "$dns_name" >> /etc/dnsmasq.d/bibsee.conf
+    systemctl restart dnsmasq || warn "dnsmasq did not restart — check 'systemctl status dnsmasq'"
+  fi
+  [ -f /etc/systemd/system/bibsee-offline-dns.timer ] || install_offline_dns_timer
   # Machines set up before this existed get it on their next update. Only
   # where the console is the Bibsee screen; a headless box keeps its kernel
   # messages.
@@ -1216,6 +1269,7 @@ main() {
   install_console_tui
   install_command
   install_backup_timer
+  install_offline_dns_timer
   start_bibsee
   write_state
   verify
